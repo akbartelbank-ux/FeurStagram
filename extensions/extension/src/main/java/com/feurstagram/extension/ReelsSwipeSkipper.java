@@ -13,7 +13,7 @@ import java.util.WeakHashMap;
 /**
  * Makes the blocked Reels page un-reachable by horizontal swipe.
  *
- * The bottom tab bar hides the Reels tab when reels are blocked (see
+ * The bottom tab bar hides the Reels tab when its nav icon is turned off (see
  * {@link Hiders}), but the main {@code swipeable_tab_view_pager} still keeps the
  * Reels page in its order: Home, Reels, Direct, Search, Profile. Swiping from
  * Home toward Messages therefore lands on the (now empty) Reels page and needs a
@@ -151,7 +151,7 @@ public final class ReelsSwipeSkipper {
 
             // We're on the (hidden, empty) Reels page.
             if (bouncing) return;                       // skip already issued
-            if (!Config.isReelsBlocked()) return;       // reels allowed: leave it
+            if (Config.isReelsTabShown()) return;       // Reels tab visible: leave the page reachable
             if (scrollState() == STATE_DRAGGING) return; // user still has finger down
 
             int dir = prev <= reels ? 1 : -1;           // continue past reels

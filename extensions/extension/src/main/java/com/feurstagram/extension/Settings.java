@@ -151,6 +151,16 @@ public final class Settings {
         addRow(context, surfaces, "Notes", "block_notes", Config.isNotesBlocked());
         addRow(context, surfaces, "Suggested accounts", "block_suggested", Config.isSuggestedBlocked());
         addRow(context, surfaces, "Ads", "block_ads", Config.isAdsBlocked());
+        addRow(context, surfaces, "Notifications button", "block_notifications", Config.isNotificationsButtonBlocked());
+
+        addSectionHeader(context, column, "NAVIGATION BAR");
+        LinearLayout nav = makeSectionCard(context);
+        column.addView(nav);
+        addRow(context, nav, "Search", "nav_show_search", Config.getBlocked("nav_show_search", true));
+        addRow(context, nav, "Reels", "nav_show_reels", Config.getBlocked("nav_show_reels", false));
+        addRow(context, nav, "Create", "nav_show_create", Config.getBlocked("nav_show_create", true));
+        addRow(context, nav, "Messages", "nav_show_direct", Config.getBlocked("nav_show_direct", true));
+        addRow(context, nav, "Profile", "nav_show_profile", Config.getBlocked("nav_show_profile", true));
 
         addSectionHeader(context, column, "FEED");
         LinearLayout feed = makeSectionCard(context);
@@ -172,12 +182,22 @@ public final class Settings {
         checkLp.setMargins(0, dp(context, 12), 0, 0);
         column.addView(checkUpdate, checkLp);
 
-        Button donate = makeButton(context, "Donate", Color.parseColor("#EA4AAA"), Color.WHITE, true);
-        donate.setOnClickListener(v -> openUrl(context, "https://github.com/sponsors/jean-voila"));
-        LinearLayout.LayoutParams donateLp =
+        // GitHub Sponsors: a calm, neutral button (not the flashy Sponsors pink).
+        Button sponsors = makeButton(context, "Donate on Github Sponsors", SURFACE_CONTAINER, ON_SURFACE, true);
+        sponsors.setOnClickListener(v -> openUrl(context, "https://github.com/sponsors/jean-voila"));
+        LinearLayout.LayoutParams sponsorsLp =
                 new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        donateLp.setMargins(0, dp(context, 20), 0, 0);
-        column.addView(donate, donateLp);
+        sponsorsLp.setMargins(0, dp(context, 20), 0, 0);
+        column.addView(sponsors, sponsorsLp);
+
+        // Buy Me a Coffee: brand yellow (#FFDD00) with black text, coffee-cup glyph.
+        Button coffee = makeButton(context, "☕  Buy me a coffee!",
+                Color.parseColor("#FFDD00"), Color.parseColor("#000000"), true);
+        coffee.setOnClickListener(v -> openUrl(context, "https://buymeacoffee.com/jean_voila"));
+        LinearLayout.LayoutParams coffeeLp =
+                new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        coffeeLp.setMargins(0, dp(context, 12), 0, 0);
+        column.addView(coffee, coffeeLp);
 
         scroll.addView(column);
         LinearLayout.LayoutParams scrollLp =
@@ -425,6 +445,10 @@ public final class Settings {
             sub.setText("Block sponsored ads across Instagram.");
         } else if (key.equals("limit_following_feed")) {
             sub.setText("Show only accounts you follow (needs the feed unblocked).");
+        } else if (key.equals("block_notifications")) {
+            sub.setText("Hide the notifications (heart) button in the feed header.");
+        } else if (key.startsWith("nav_show_")) {
+            sub.setText("Show this icon in the navigation bar.");
         } else {
             sub.setText("Hide this surface in Instagram.");
         }

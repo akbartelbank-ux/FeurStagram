@@ -105,6 +105,23 @@ public final class Config {
     public static boolean isSuggestedBlocked() { return getBlocked("block_suggested", true); }
     public static boolean isAdsBlocked()       { return getBlocked("block_ads", true); }
 
+    /**
+     * Whether the notifications ("heart") button in the feed header is hidden.
+     * Off by default: it's an opt-in distraction cut, and people expect their
+     * notifications entry-point to still be there after an update.
+     */
+    public static boolean isNotificationsButtonBlocked() { return getBlocked("block_notifications", false); }
+
+    /**
+     * Bottom-navigation icon visibility, stored per tab as {@code nav_show_<tab>}
+     * (true = shown). Independent of the content blocks, so hiding the Reels
+     * *icon* is decoupled from blocking Reels *content*. Home is deliberately not
+     * configurable: long-pressing it is the only Settings entry point, so it must
+     * stay present and tappable. Reels defaults to hidden to preserve the previous
+     * behaviour (blocking reels used to also hide the tab).
+     */
+    public static boolean isReelsTabShown() { return getBlocked("nav_show_reels", false); }
+
     /** Snapshot the current value of every block_* toggle for the permanent lock. */
     public static void captureBaseline() {
         HashMap<String, Boolean> baseline = new HashMap<>();

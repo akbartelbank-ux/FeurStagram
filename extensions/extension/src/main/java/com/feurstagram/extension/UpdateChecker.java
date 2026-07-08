@@ -1,6 +1,7 @@
 package com.feurstagram.extension;
 
 import android.app.Dialog;
+import android.app.DownloadManager;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -8,10 +9,12 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageInstaller;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.TypedValue;
@@ -22,13 +25,11 @@ import android.view.Window;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
@@ -292,7 +293,7 @@ public final class UpdateChecker implements Runnable {
                 return;
             }
             dialog.dismiss();
-            startDownload(context, apkUrl);
+            startDownload(context, apkUrl, tag);
         });
         buttons.addView(download);
 
@@ -301,119 +302,92 @@ public final class UpdateChecker implements Runnable {
 
     // --- Download + install -------------------------------------------------
 
-    private static void startDownload(Context context, String url) {
-        final Handler ui = new Handler(Looper.getMainLooper());
+    /** Where the background download lands (app-specific external dir, no permission needed). */
+    private static final String UPDATE_FILE_NAME = "feurstagram-update.apk";
 
-        FrameLayout frame = new FrameLayout(context);
-        int pad = Settings.dp(context, 24);
-        frame.setPadding(pad, pad, pad, pad);
-
-        LinearLayout card = new LinearLayout(context);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setBackground(Settings.roundedRect(Settings.SURFACE, 28, context));
-        card.setPadding(pad, pad, pad, pad);
-        frame.addView(card, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        TextView title = new TextView(context);
-        title.setText("Downloading update");
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f);
-        title.setTextColor(Settings.ON_SURFACE);
-        title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-        card.addView(title);
-
-        ProgressBar bar = new ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal);
-        bar.setMax(100);
-        bar.setIndeterminate(true);
-        LinearLayout.LayoutParams barLp =
-                new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        barLp.setMargins(0, Settings.dp(context, 20), 0, 0);
-        card.addView(bar, barLp);
-
-        TextView status = new TextView(context);
-        status.setText("Starting…");
-        status.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
-        status.setTextColor(Settings.ON_SURFACE_VARIANT);
-        status.setPadding(0, Settings.dp(context, 12), 0, 0);
-        card.addView(status);
-
-        Dialog dialog = new Dialog(context);
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
-        dialog.setContentView(frame);
-        dialog.setCancelable(false);
-        Window window = dialog.getWindow();
-        if (window != null) {
-            window.setBackgroundDrawable(new ColorDrawable(0));
-            window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            window.setDimAmount(0.6f);
-        }
-        dialog.show();
-
-        new Thread(() -> {
-            File apk = new File(context.getCacheDir(), "feurstagram-update.apk");
-            try {
-                download(url, apk, (percent, downloadedMb) -> ui.post(() -> {
-                    if (percent >= 0) {
-                        bar.setIndeterminate(false);
-                        bar.setProgress(percent);
-                        status.setText(percent + "%");
-                    } else {
-                        status.setText(String.format(java.util.Locale.US, "%.1f MB", downloadedMb));
-                    }
-                }));
-                ui.post(() -> {
-                    safeDismiss(dialog);
-                    installApk(context, apk);
-                });
-            } catch (Throwable t) {
-                apk.delete();
-                ui.post(() -> {
-                    safeDismiss(dialog);
-                    Toast.makeText(context, "Download failed. Opening release page…", Toast.LENGTH_LONG).show();
-                    openReleasePage(context);
-                });
-            }
-        }).start();
-    }
-
-    private interface ProgressListener {
-        void onProgress(int percent, double downloadedMb);
-    }
-
-    private static void download(String url, File out, ProgressListener listener) throws Exception {
-        java.net.HttpURLConnection connection =
-                (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
-        connection.setInstanceFollowRedirects(true);
-        connection.setRequestProperty("User-Agent", "Feurstagram-UpdateCheck");
-        connection.setConnectTimeout(15000);
-        connection.setReadTimeout(30000);
+    /**
+     * Download the update in the background through the system {@link DownloadManager}.
+     * It shows its own progress notification, survives the app being backgrounded,
+     * and follows GitHub's redirect to the asset CDN. When it finishes we hand the
+     * APK to the {@link PackageInstaller}; if the app was killed meanwhile, tapping
+     * the completed-download notification still opens the installer (apk mime type).
+     */
+    private static void startDownload(Context context, String url, String tag) {
+        Context app = context.getApplicationContext();
         try {
-            int total = connection.getContentLength();
-            try (InputStream in = connection.getInputStream();
-                 OutputStream fos = new FileOutputStream(out)) {
-                byte[] buffer = new byte[65536];
-                long read = 0;
-                int n;
-                int lastPercent = -1;
-                long lastPost = 0;
-                while ((n = in.read(buffer)) > 0) {
-                    fos.write(buffer, 0, n);
-                    read += n;
-                    if (total > 0) {
-                        int percent = (int) (read * 100L / total);
-                        if (percent != lastPercent) {
-                            lastPercent = percent;
-                            listener.onProgress(percent, 0);
-                        }
-                    } else if (read - lastPost > 512 * 1024) {
-                        lastPost = read;
-                        listener.onProgress(-1, read / (1024.0 * 1024.0));
-                    }
+            DownloadManager dm = (DownloadManager) app.getSystemService(Context.DOWNLOAD_SERVICE);
+            File dir = app.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+            if (dm == null || dir == null) {
+                throw new IllegalStateException("DownloadManager unavailable");
+            }
+            File dest = new File(dir, UPDATE_FILE_NAME);
+            if (dest.exists() && !dest.delete()) {
+                // Stale file we can't remove: fall back rather than install something old.
+                throw new IllegalStateException("Could not clear previous download");
+            }
+
+            DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+            request.setTitle("FeurStagram " + tag);
+            request.setDescription("Downloading update…");
+            request.setMimeType("application/vnd.android.package-archive");
+            request.addRequestHeader("User-Agent", "Feurstagram-UpdateCheck");
+            request.setNotificationVisibility(
+                    DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            request.setDestinationInExternalFilesDir(app, Environment.DIRECTORY_DOWNLOADS, UPDATE_FILE_NAME);
+
+            long downloadId = dm.enqueue(request);
+            registerDownloadReceiver(app, dm, downloadId, dest);
+            Toast.makeText(context,
+                    "Downloading update in the background — you'll be prompted to install when it's ready.",
+                    Toast.LENGTH_LONG).show();
+        } catch (Throwable t) {
+            Toast.makeText(context, "Couldn't start the download. Opening release page…", Toast.LENGTH_LONG).show();
+            openReleasePage(context);
+        }
+    }
+
+    /**
+     * Wait for the background download to finish, then launch the install. The
+     * receiver is registered on the application context so it outlives the settings
+     * dialog; it unregisters itself on completion.
+     */
+    private static void registerDownloadReceiver(Context app, DownloadManager dm, long downloadId, File dest) {
+        BroadcastReceiver receiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context c, Intent intent) {
+                long finished = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1);
+                if (finished != downloadId) return; // a different download completed
+                try {
+                    c.unregisterReceiver(this);
+                } catch (Throwable ignored) {
+                }
+                int status = queryStatus(dm, downloadId);
+                if (status == DownloadManager.STATUS_SUCCESSFUL && dest.exists()) {
+                    installApk(c.getApplicationContext(), dest);
+                } else {
+                    Toast.makeText(c, "Update download failed. Opening release page…", Toast.LENGTH_LONG).show();
+                    openReleasePage(c);
                 }
             }
-        } finally {
-            connection.disconnect();
+        };
+        IntentFilter filter = new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
+        // The completion broadcast comes from the system, so the receiver must be exported.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            app.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
+        } else {
+            app.registerReceiver(receiver, filter);
         }
+    }
+
+    /** Read the DownloadManager status column for a finished download, or -1. */
+    private static int queryStatus(DownloadManager dm, long downloadId) {
+        try (Cursor cursor = dm.query(new DownloadManager.Query().setFilterById(downloadId))) {
+            if (cursor != null && cursor.moveToFirst()) {
+                return cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+            }
+        } catch (Throwable ignored) {
+        }
+        return -1;
     }
 
     private static void installApk(Context context, File apk) {
@@ -529,13 +503,6 @@ public final class UpdateChecker implements Runnable {
                 context.startActivity(intent);
             } catch (Throwable ignored) {
             }
-        }
-    }
-
-    private static void safeDismiss(Dialog dialog) {
-        try {
-            dialog.dismiss();
-        } catch (Throwable ignored) {
         }
     }
 

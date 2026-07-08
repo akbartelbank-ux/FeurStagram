@@ -20,11 +20,25 @@ public final class Hiders {
     public static void installAll(ViewGroup root) {
         if (root == null) return;
         ViewTreeObserver observer = root.getViewTreeObserver();
-        // Reels tab, Notes tray, Instants entry-points.
-        observer.addOnGlobalLayoutListener(new VisibilityHider(root, "block_reels", "clips_tab"));
+        // Notes tray, Instants entry-points.
         observer.addOnGlobalLayoutListener(new VisibilityHider(root, "block_notes", "cf_hub_recycler_view"));
         observer.addOnGlobalLayoutListener(new VisibilityHider(root, "block_instants",
                 "creation_entrypoint", "direct_quick_snap_consumption_preview"));
+        // Notifications ("heart") button in the feed header. Opt-in (default visible).
+        // Scoped to the feed action bar's right button container: the target view id
+        // ("notification") is shared with the unread-DM badge on the Direct tab, so
+        // an unscoped search could hide that badge instead.
+        observer.addOnGlobalLayoutListener(new VisibilityHider(root, "block_notifications",
+                false, false, "action_bar_buttons_container_right", "notification"));
+        // Bottom-navigation icons, each shown/hidden independently. These use the
+        // inverted "nav_show_<tab>" preference (true = shown). Home is intentionally
+        // absent: long-pressing it opens Settings, so it must stay visible. Reels
+        // defaults to hidden, matching the old "blocking reels hid its tab" behaviour.
+        observer.addOnGlobalLayoutListener(new VisibilityHider(root, "nav_show_search", true, true, null, "search_tab"));
+        observer.addOnGlobalLayoutListener(new VisibilityHider(root, "nav_show_reels", false, true, null, "clips_tab"));
+        observer.addOnGlobalLayoutListener(new VisibilityHider(root, "nav_show_create", true, true, null, "creation_tab"));
+        observer.addOnGlobalLayoutListener(new VisibilityHider(root, "nav_show_direct", true, true, null, "direct_tab"));
+        observer.addOnGlobalLayoutListener(new VisibilityHider(root, "nav_show_profile", true, true, null, "profile_tab"));
         // Cold-start landing-page redirect.
         observer.addOnGlobalLayoutListener(new LandingWatcher(root));
         // Skip the blocked Reels page when swiping between Home and Messages.
@@ -48,11 +62,29 @@ public final class Hiders {
     static final class VisibilityHider implements ViewTreeObserver.OnGlobalLayoutListener {
         private final ViewGroup root;
         private final String key;
+        private final boolean defaultValue;
+        private final boolean invert;
+        private final String scope;
         private final String[] names;
 
         VisibilityHider(ViewGroup root, String key, String... names) {
+            this(root, key, true, false, null, names);
+        }
+
+        /**
+         * @param defaultValue value used when the preference is unset
+         * @param invert       when true the preference means "shown" rather than
+         *                     "hidden" (used for the nav_show_* toggles)
+         * @param scope        optional container resource name to search within,
+         *                     so a view id reused elsewhere is only touched inside it
+         */
+        VisibilityHider(ViewGroup root, String key, boolean defaultValue, boolean invert,
+                        String scope, String... names) {
             this.root = root;
             this.key = key;
+            this.defaultValue = defaultValue;
+            this.invert = invert;
+            this.scope = scope;
             this.names = names;
         }
 
@@ -66,7 +98,17 @@ public final class Hiders {
             // tab bar's ViewTreeObserver still fires for those layout passes.
             View searchRoot = root.getRootView();
             if (searchRoot == null) searchRoot = root;
-            int visibility = Config.getBlocked(key, true) ? View.GONE : View.VISIBLE;
+            // Optionally narrow the search to a named container, so a view id that
+            // is reused elsewhere in the window is only touched inside that subtree.
+            if (scope != null) {
+                int scopeId = resolveId(context, scope);
+                View scopeView = scopeId == 0 ? null : searchRoot.findViewById(scopeId);
+                if (scopeView == null) return; // container not on this screen; leave everything alone
+                searchRoot = scopeView;
+            }
+            boolean pref = Config.getBlocked(key, defaultValue);
+            boolean hidden = invert ? !pref : pref; // invert: pref true = shown
+            int visibility = hidden ? View.GONE : View.VISIBLE;
             for (String name : names) {
                 int id = resolveId(context, name);
                 if (id == 0) continue;
